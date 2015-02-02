@@ -1,10 +1,8 @@
-//Udacity HW 4
-//Radix Sorting
-
 #include "utils.h"
 #include <thrust/host_vector.h>
+#include <stdio.h>
 
-/* Red Eye Removal
+/* 
    ===============
    
    For this assignment we are implementing red eye removal.  This is
@@ -42,13 +40,62 @@
 
  */
 
+const size_t VALUES_AMOUNT = 2;
+const size_t BITS_AMOUNT = sizeof(unsigned int) << 3;
+const size_t BINS_AMOUNT = BITS_AMOUNT * VALUES_AMOUNT;
+
+__device__ unsigned int histoResult[BINS_AMOUNT];
+__device__ unsigned int *scanResult = histoResult;
+
+__global__ void scanKernel()
+{
+   for (int step = 1; step < BINS_AMOUNT; step <<= 1)
+   {
+      if ((int)threadIdx.x - step >= 0)
+      {
+         scanResult[threadIdx.x] += scanResult[threadIdx.x - step];
+      }
+      __syncthreads();
+   }
+   if (0 == threadIdx.x)
+   {
+      scanResult[0] = 0;
+   }
+}
+
+__global__ void histoKernel(unsigned int* const d_in)
+{
+   extern __shared__ unsigned int shMem[];
+   size_t threadId = threadIdx.x + blockDim.x * blockIdx.x;
+   
+   unsigned int curValue = d_in[threadId];
+   for (size_t index = 0; index < BITS_AMOUNT; index++)
+   {
+      unsigned int offset = (curValue & 1u) + 1;
+      unsigned int bin = index * offset;
+      atomicAdd(&shMem[bin], 1);
+      curValue >>= 1;
+   }
+   __syncthreads();
+   
+   if (threadIdx.x < BINS_AMOUNT)
+   {
+      atomicAdd(&histoResult[threadIdx.x], shMem[threadIdx.x]);
+   }
+}
+
+const size_t NUM_OF_THREADS_HISTO = 320;
 
 void your_sort(unsigned int* const d_inputVals,
                unsigned int* const d_inputPos,
                unsigned int* const d_outputVals,
                unsigned int* const d_outputPos,
                const size_t numElems)
-{ 
-  //TODO
-  //PUT YOUR SORT HERE
+{
+   histoKernel<<<numElems / NUM_OF_THREADS_HISTO, NUM_OF_THREADS_HISTO, BINS_AMOUNT * sizeof(unsigned int)>>>(d_inputVals);
+   cudaDeviceSynchronize();
+   checkCudaErrors(cudaGetLastError());
+   scanKernel<<<1, BINS_AMOUNT>>>();
+   cudaDeviceSynchronize();
+   checkCudaErrors(cudaGetLastError());
 }
